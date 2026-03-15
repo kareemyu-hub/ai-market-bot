@@ -1,29 +1,36 @@
+import os
 import requests
 import datetime
 import feedparser
-import schedule
+import traceback
 import time
-import os
+
+# ---------- 模式選擇 ----------
+# True → 測試模式，每分鐘發一次，方便確認
+# False → 正式模式，每天固定時間由 Railway Scheduler 執行
+TEST_MODE = True
 
 # ---------- 環境變數 ----------
-TOKEN = os.environ.get("TOKEN")  # Telegram BOT TOKEN
-CHAT_ID = os.environ.get("CHAT_ID")  # 你的 Chat ID
+TOKEN = os.environ.get("TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
-# ---------- Telegram 發送函數 ----------
+# ---------- 發送 Telegram ----------
 def send_telegram(message):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         data = {"chat_id": CHAT_ID, "text": message}
         r = requests.post(url, data=data, timeout=10)
-        if r.status_code != 200:
-            print(f"Telegram 發送失敗: {r.text}")
+        if r.status_code == 200:
+            print("✅ Telegram 發送成功")
+        else:
+            print(f"❌ Telegram 發送失敗: {r.text}")
     except Exception as e:
-        print("Telegram 發送 Exception:", e)
+        print("❌ Telegram Exception:", e)
+        print(traceback.format_exc())
 
-# ---------- RSS / 新聞抓取 ----------
+# ---------- 抓新聞 ----------
 NEWS_FEEDS = [
     "https://www.reuters.com/rssFeed/wealth",
-    "https://www.bloomberg.com/feed/podcast/market-update",
     "https://tw.finance.yahoo.com/rss/"
 ]
 
@@ -32,86 +39,39 @@ def fetch_news():
     for feed_url in NEWS_FEEDS:
         try:
             d = feedparser.parse(feed_url)
-            for entry in d.entries[:3]:  # 每個來源抓前三篇
+            for entry in d.entries[:3]:
                 headlines.append(f"- {entry.title}\n{entry.link}")
-        except Exception as e:
-            print(f"抓 RSS 失敗 ({feed_url}): {e}")
-    return headlines if headlines else ["無法抓取新聞"]
-
-# ---------- 市場分析 ----------
-WATCHED_STOCKS = ["NVDA", "TSMC", "AAPL", "TSLA", "AMD"]
-WATCHED_CRYPTO = ["BTC", "ETH"]
-
-def market_analysis():
-    try:
-        analysis = {
-            "US Market": "S&P500 +0.8%, NASDAQ +1.2%, 市場情緒偏多",
-            "Taiwan Market": "半導體↑, AI供應鏈↑, 航運↓",
-            "Crypto": "BTC震盪偏多, 資金流入"
-        }
-        return analysis
-    except Exception as e:
-        print("市場分析 Exception:", e)
-        return {"US Market":"無資料","Taiwan Market":"無資料","Crypto":"無資料"}
-
-# ---------- 熱門股票 ----------
-def hot_stocks():
-    try:
-        return WATCHED_STOCKS
-    except Exception as e:
-        print("熱門股票 Exception:", e)
-        return []
-
-# ---------- 今日事件 ----------
-def today_events():
-    try:
-        events = [
-            "21:30 美國 CPI 公布",
-            "22:45 製造業 PMI",
-            "02:00 FOMC 利率會議"
-        ]
-        return events
-    except Exception as e:
-        print("今日事件 Exception:", e)
-        return []
+        except:
+            headlines.append("- 無法抓取新聞")
+    return headlines
 
 # ---------- 生成訊息 ----------
 def generate_report():
     today = datetime.date.today()
     headlines = fetch_news()
-    market = market_analysis()
-    stocks = hot_stocks()
-    events = today_events()
-
-    try:
-        message = f"📊 AI市場雷達 {today}\n\n"
-        message += f"🌎 全球市場:\n{market['US Market']}\n\n"
-        message += f"🇹🇼 台股可能影響:\n{market['Taiwan Market']}\n\n"
-        message += f"💰 加密市場:\n{market['Crypto']}\n\n"
-        message += "📰 重要新聞:\n" + "\n".join(headlines[:5]) + "\n\n"
-        message += "🎯 今日熱門股票:\n" + ", ".join(stocks) + "\n\n"
-        message += "📅 今日重要事件:\n" + "\n".join(events) + "\n\n"
-        message += "🚨 市場異動 / 突發新聞會自動推播"
-    except Exception as e:
-        print("生成訊息 Exception:", e)
-        message = "AI市場雷達發生錯誤，請檢查程式"
+    message = f"📊 AI市場雷達 {today}\n\n"
+    message += "🌎 全球市場: S&P500 +0.8%, NASDAQ +1.2%, 市場情緒偏多\n\n"
+    message += "🇹🇼 台股可能影響: 半導體↑, AI供應鏈↑, 航運↓\n\n"
+    message += "💰 加密市場: BTC震盪偏多, ETH穩定\n\n"
+    message += "📰 今日新聞:\n" + "\n".join(headlines[:5]) + "\n\n"
+    message += "🎯 今日熱門股票: NVDA, TSMC, AAPL, TSLA, AMD\n\n"
+    message += "📅 今日重要事件:\n21:30 美國 CPI, 22:45 製造業 PMI\n"
     return message
 
 # ---------- 發送晨報 ----------
 def send_daily_report():
-    try:
-        report = generate_report()
-        send_telegram(report)
-    except Exception as e:
-        print("發送晨報 Exception:", e)
-
-# ---------- 排程 ----------
-schedule.every().day.at("08:00").do(send_daily_report)
+    print("DEBUG: send_daily_report 被呼叫")
+    report = generate_report()
+    send_telegram(report)
 
 # ---------- 主程式 ----------
-while True:
-    try:
-        schedule.run_pending()
-    except Exception as e:
-        print("排程 Exception:", e)
-    time.sleep(60)
+if __name__ == "__main__":
+    if TEST_MODE:
+        # 測試模式：每分鐘發一次訊息，連續 3 次
+        for i in range(3):
+            send_daily_report()
+            print(f"⏱ 等待 60 秒後發送下一次 ({i+1}/3)")
+            time.sleep(60)
+    else:
+        # 正式模式：每天由 Railway Scheduler 執行一次
+        send_daily_report()
