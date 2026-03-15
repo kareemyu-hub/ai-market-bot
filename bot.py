@@ -1,9 +1,9 @@
 import os
-import datetime
 import requests
+import datetime
 import feedparser
-import yfinance as yf
 import traceback
+import yfinance as yf
 
 TOKEN = os.environ.get("TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
@@ -16,6 +16,7 @@ NEWS_FEEDS = [
 
 TOP_STOCKS = ["TSMC", "NVDA", "AAPL", "TSLA", "AMD"]
 
+# ---------- Telegram 發送 ----------
 def send_telegram(message):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -29,6 +30,7 @@ def send_telegram(message):
         print("❌ Telegram Exception:", e)
         print(traceback.format_exc())
 
+# ---------- 新聞抓取 + 情緒分析 ----------
 def fetch_news():
     headlines = []
     for feed_url in NEWS_FEEDS:
@@ -52,50 +54,51 @@ def analyze_sentiment(text):
     else:
         return "⚖️中性"
 
-def fetch_market_data():
-    # 全球市場
-    global_market = {}
-    for symbol,name in [("^GSPC","S&P500"),("^IXIC","NASDAQ")]:
-        try:
-            data = yf.Ticker(symbol).history(period="2d")
-            change = ((data['Close'][-1]-data['Close'][-2])/data['Close'][-2])*100
-            global_market[name] = round(change,2)
-        except:
-            global_market[name] = 0.0
+# ---------- 台股即時漲跌 ----------
+def fetch_tw_stock(stock_no):
+    try:
+        url = f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={datetime.date.today().strftime('%Y%m%d')}&type=ALL"
+        r = requests.get(url)
+        data = r.json()
+        # 搜尋股票
+        for item in data['data9']:  # data9 是當日個股
+            if item[0] == stock_no:
+                change = float(item[8].replace(',',''))  # 漲跌幅
+                return round(change,2)
+        return 0.0
+    except:
+        return 0.0
 
-    # 台股熱門股
-    tw_stock = {}
-    for stock in TOP_STOCKS:
-        try:
-            symbol_map = {"TSMC":"2330.TW","NVDA":"NVDA","AAPL":"AAPL","TSLA":"TSLA","AMD":"AMD"}
-            symbol = symbol_map[stock]
-            data = yf.Ticker(symbol).history(period="2d")
-            change = ((data['Close'][-1]-data['Close'][-2])/data['Close'][-2])*100
-            tw_stock[stock] = round(change,2)
-        except:
-            tw_stock[stock] = 0.0
+# ---------- 美股 / Crypto ----------  
+def fetch_yf_change(symbol):
+    try:
+        data = yf.Ticker(symbol).history(period="1d", interval="5m")
+        change = ((data['Close'][-1]-data['Close'][0])/data['Close'][0])*100
+        return round(change,2)
+    except:
+        return 0.0
 
-    # 加密貨幣
-    crypto = {}
-    for coin,symbol in [("BTC","BTC-USD"),("ETH","ETH-USD")]:
-        try:
-            data = yf.Ticker(symbol).history(period="2d")
-            change = ((data['Close'][-1]-data['Close'][-2])/data['Close'][-2])*100
-            crypto[coin] = round(change,2)
-        except:
-            crypto[coin] = 0.0
-
-    return global_market, tw_stock, crypto
-
+# ---------- 生成晨報訊息 ----------
 def generate_report():
     today = datetime.date.today()
     headlines = fetch_news()
-    global_market, tw_stock, crypto = fetch_market_data()
+
+    # 台股
+    tw_stock_map = {"TSMC":"2330.TW"}
+    tw_stock = {name: fetch_tw_stock(no) for name,no in tw_stock_map.items()}
+
+    # 美股
+    global_market = {"S&P500":"^GSPC","NASDAQ":"^IXIC"}
+    global_change = {k: fetch_yf_change(v) for k,v in global_market.items()}
+
+    # Crypto
+    crypto_symbols = {"BTC":"BTC-USD","ETH":"ETH-USD"}
+    crypto = {k: fetch_yf_change(v) for k,v in crypto_symbols.items()}
 
     message = f"📊 AI市場雷達 {today}\n\n"
 
     gm_text = "🌎 全球市場：\n"
-    for k,v in global_market.items():
+    for k,v in global_change.items():
         arrow = "⬆️" if v>0 else "⬇️" if v<0 else "⏺️"
         gm_text += f"{k} {v:+.2f}% {arrow}, "
     message += gm_text.rstrip(", ") + "\n\n"
@@ -116,7 +119,9 @@ def generate_report():
 
     message += "🎯 今日熱門股票：\n"
     for s in TOP_STOCKS:
-        message += f"{s} {tw_stock[s]:+0.2f}% , "
+        change = fetch_yf_change(s) if s != "TSMC" else tw_stock["TSMC"]
+        arrow = "⬆️" if change>0 else "⬇️" if change<0 else "⏺️"
+        message += f"{s} {change:+.2f}% {arrow}, "
     message = message.rstrip(", ") + "\n\n"
 
     message += "📅 今日重要事件：\n21:30 美國 CPI, 22:45 製造業 PMI\n"
@@ -124,7 +129,6 @@ def generate_report():
     return message
 
 def send_daily_report():
-    print("DEBUG: send_daily_report 被呼叫")
     report = generate_report()
     send_telegram(report)
 
