@@ -8,7 +8,7 @@ import time
 # ---------- 模式選擇 ----------
 # True → 測試模式，每分鐘發一次，方便確認
 # False → 正式模式，每天固定時間由 Railway Scheduler 執行
-TEST_MODE = True
+TEST_MODE = False
 
 # ---------- 環境變數 ----------
 TOKEN = os.environ.get("TOKEN")
