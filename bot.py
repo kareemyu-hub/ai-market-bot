@@ -6,7 +6,7 @@ import traceback
 import yfinance as yf
 
 # ---------- 模式選擇 ----------
-TEST_MODE = True  # True 測試模式，每分鐘發一次；False 正式模式每天固定時間
+TEST_MODE = False  # True 測試模式，每分鐘發一次；False 正式模式每天固定時間
 
 # ---------- Telegram 環境變數 ----------
 TOKEN = os.environ.get("TOKEN")
