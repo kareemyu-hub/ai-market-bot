@@ -4,11 +4,12 @@ import datetime
 import feedparser
 import traceback
 import yfinance as yf
+import time
 
 # ------------------ 環境變數 ------------------
-TOKEN = os.environ.get("TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-FINNHUB_KEY = os.environ.get("FINNHUB_KEY")
+TOKEN = os.environ.get("TOKEN")       # Telegram Bot Token
+CHAT_ID = os.environ.get("CHAT_ID")   # Telegram Chat ID
+FINNHUB_KEY = os.environ.get("FINNHUB_KEY")  # Finnhub API Key
 
 # ------------------ 新聞來源 ------------------
 NEWS_FEEDS = [
@@ -26,7 +27,7 @@ def send_telegram(message):
         data = {"chat_id": CHAT_ID, "text": message}
         r = requests.post(url, data=data, timeout=10)
         if r.status_code == 200:
-            print("✅ Telegram 發送成功")
+            print(f"✅ Telegram 發送成功: {datetime.datetime.now()}")
         else:
             print(f"❌ Telegram 發送失敗: {r.text}")
     except Exception as e:
@@ -135,5 +136,12 @@ def send_daily_report():
     report = generate_report()
     send_telegram(report)
 
+# ------------------ 自動循環，每 2 小時執行 ------------------
+INTERVAL = 2 * 60 * 60  # 兩小時 = 7200 秒
+
 if __name__ == "__main__":
-    send_daily_report()
+    while True:
+        print(f"⏰ 執行晨報程式: {datetime.datetime.now()}")
+        send_daily_report()
+        print(f"💤 等待 {INTERVAL/3600} 小時後再次執行...")
+        time.sleep(INTERVAL)
