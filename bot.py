@@ -1,138 +1,191 @@
-import yfinance as yf
+import os
 import requests
-from datetime import datetime
+import datetime
+import feedparser
+import traceback
+import yfinance as yf
+import time
 
-# ===== Telegram =====
-BOT_TOKEN = "你的BOT_TOKEN"
-CHAT_ID = "你的CHAT_ID"
+# ------------------ 環境變數 ------------------
+TOKEN = os.environ.get("TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+FINNHUB_KEY = os.environ.get("FINNHUB_KEY")
 
+# ------------------ 新聞來源 ------------------
+NEWS_FEEDS = [
+    "https://www.reuters.com/rssFeed/wealth",
+    "https://tw.finance.yahoo.com/rss/"
+]
+
+# ------------------ 熱門股票 ------------------
+TOP_STOCKS = ["TSMC","NVDA","AAPL","TSLA","AMD"]
+
+# ------------------ AI概念股 ------------------
+AI_STOCKS = ["NVDA","AMD","TSM","AAPL","TSLA"]
+
+# ------------------ Telegram 發送 ------------------
 def send_telegram(message):
-
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
-
     try:
-        requests.post(url, data=payload)
-    except:
-        pass
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        data = {"chat_id": CHAT_ID, "text": message}
+        r = requests.post(url, data=data, timeout=10)
+        if r.status_code == 200:
+            print(f"✅ Telegram 發送成功: {datetime.datetime.now()}")
+        else:
+            print(f"❌ Telegram 發送失敗: {r.text}")
+    except Exception as e:
+        print("❌ Telegram Exception:", e)
+        print(traceback.format_exc())
 
-
-# ===== 股票資料 =====
-def get_stock(symbol):
-
-    try:
-
-        data = yf.download(symbol, period="1d", progress=False)
-
-        if data.empty:
-            return None
-
-        close = float(data["Close"].iloc[-1])
-        open_price = float(data["Open"].iloc[-1])
-
-        change = ((close - open_price) / open_price) * 100
-
-        emoji = "🟢" if change > 0 else "🔴"
-
-        return f"{change:.2f}% {emoji}"
-
-    except:
-        return None
-
-
-# ===== 加密貨幣 =====
-def get_crypto(coin):
-
-    try:
-
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd&include_24hr_change=true"
-
-        data = requests.get(url).json()
-
-        change = data[coin]["usd_24h_change"]
-
-        emoji = "🟢" if change > 0 else "🔴"
-
-        return f"{change:.2f}% {emoji}"
-
-    except:
-        return None
-
-
-# ===== 市場報告 =====
-def generate_report():
-
-    sp500 = get_stock("SPY")
-    nasdaq = get_stock("QQQ")
-
-    tsmc = get_stock("TSM")
-    nvda = get_stock("NVDA")
-    aapl = get_stock("AAPL")
-    tsla = get_stock("TSLA")
-    amd = get_stock("AMD")
-
-    btc = get_crypto("bitcoin")
-    eth = get_crypto("ethereum")
-
-    today = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    def safe(v):
-        return v if v else "暫無資料 ⚪️"
-
-    message = f"""
-📊 AI市場雷達 {today}
-
-🌎 全球市場
-S&P500 {safe(sp500)}
-NASDAQ {safe(nasdaq)}
-
-🇹🇼 台股
-TSMC {safe(tsmc)}
-
-💰 加密
-BTC {safe(btc)}
-ETH {safe(eth)}
-
-🎯 AI熱門股
-NVDA {safe(nvda)}
-AMD {safe(amd)}
-AAPL {safe(aapl)}
-TSLA {safe(tsla)}
-
-📅 今日事件
-21:30 美國 CPI
-22:45 製造業 PMI
-"""
-
-    return message
-
-
-# ===== 系統啟動測試 =====
+# ------------------ 系統啟動測試訊息 ------------------
 def send_startup_test():
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     message = f"""
 🤖 AI市場雷達系統啟動
 
-系統時間：
+時間：
 {now}
 
 狀態：
 ✅ 系統正常運作
 """
-
     send_telegram(message)
 
+# ------------------ 新聞抓取 + 情緒分析 ------------------
+def fetch_news():
+    headlines = []
+    for feed_url in NEWS_FEEDS:
+        try:
+            d = feedparser.parse(feed_url)
+            for entry in d.entries[:5]:
+                title = entry.title
+                summary = getattr(entry,"summary","")
+                sentiment = analyze_sentiment(title + summary)
+                headlines.append(f"{sentiment} {title}\n{entry.link}")
+        except:
+            headlines.append("- 無法抓取新聞")
+    return headlines
 
-# ===== 主程式 =====
+def analyze_sentiment(text):
+    text = text.lower()
+    if any(k in text for k in ["上漲","利多","看好","漲"]):
+        return "📈利多"
+    elif any(k in text for k in ["下跌","利空","警告","跌"]):
+        return "📉利空"
+    else:
+        return "⚖️中性"
 
-send_startup_test()
+# ------------------ 台股即時漲跌 ------------------
+def fetch_tw_stock(stock_no):
+    try:
+        now = datetime.datetime.now()
+        # 台股開盤時間 09:00 - 13:30
+        if now.hour < 9 or now.hour > 13:
+            return None  # 開盤前或收盤後
+        url = f"https://finnhub.io/api/v1/quote?symbol={stock_no}&token={FINNHUB_KEY}"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        c = float(data.get("c", 0))
+        o = float(data.get("o", 0))
+        if c == 0 or o == 0:
+            return None
+        change = ((c - o)/o)*100
+        return round(change,2)
+    except:
+        return None
 
-report = generate_report()
+# ------------------ 美股 / Crypto ------------------
+def fetch_yf_change(symbol):
+    try:
+        data = yf.Ticker(symbol).history(period="1d", interval="5m")
+        if data.empty or len(data['Close']) < 2:
+            return None
+        change = ((data['Close'][-1]-data['Close'][0])/data['Close'][0])*100
+        return round(change,2)
+    except:
+        return None
 
-send_telegram(report)
+# ------------------ AI概念股強度 ------------------
+def fetch_ai_strength():
+    count_up = 0
+    for s in AI_STOCKS:
+        change = fetch_yf_change(s)
+        if change and change>0:
+            count_up += 1
+    return f"{count_up}/{len(AI_STOCKS)} 上漲 🔥"
+
+# ------------------ 生成市場報告 ------------------
+def generate_report():
+    today = datetime.date.today()
+    headlines = fetch_news()
+
+    # 台股
+    tw_map = {"TSMC":"TWSE:2330"}
+    tw_stock = {name: fetch_tw_stock(no) for name,no in tw_map.items()}
+
+    # 美股
+    global_map = {"S&P500":"^GSPC","NASDAQ":"^IXIC"}
+    global_change = {k: fetch_yf_change(v) for k,v in global_map.items()}
+
+    # Crypto
+    crypto_symbols = {"BTC":"BTC-USD","ETH":"ETH-USD"}
+    crypto = {k: fetch_yf_change(v) for k,v in crypto_symbols.items()}
+
+    # --------- 組訊息 ----------
+    message = f"📊 AI市場雷達 {today}\n\n"
+
+    gm_text = "🌎 全球市場：\n"
+    for k,v in global_change.items():
+        arrow = "⬆️" if v and v>0 else "⬇️" if v and v<0 else "⚪️"
+        text = f"{v:+.2f}%" if v is not None else "暫無資料"
+        gm_text += f"{k} {text} {arrow}, "
+    message += gm_text.rstrip(", ") + "\n\n"
+
+    tw_text = "🇹🇼 台股市場：\n"
+    for k,v in tw_stock.items():
+        arrow = "⬆️" if v and v>0 else "⬇️" if v and v<0 else "⚪️"
+        text = f"{v:+.2f}%" if v is not None else "開盤前暫無資料"
+        tw_text += f"{k} {text} {arrow}, "
+    message += tw_text.rstrip(", ") + "\n\n"
+
+    crypto_text = "💰 加密市場：\n"
+    for k,v in crypto.items():
+        arrow = "⬆️" if v and v>0 else "⬇️" if v and v<0 else "⚪️"
+        text = f"{v:+.2f}%" if v is not None else "暫無資料"
+        crypto_text += f"{k} {text} {arrow}, "
+    message += crypto_text.rstrip(", ") + "\n\n"
+
+    message += "📰 最新新聞摘要：\n" + "\n".join(headlines) + "\n\n"
+
+    # AI概念股強度
+    message += f"🧠 AI板塊強度： {fetch_ai_strength()}\n\n"
+
+    message += "🎯 今日熱門股票：\n"
+    for s in TOP_STOCKS:
+        change = fetch_yf_change(s) if s!="TSMC" else tw_stock["TSMC"]
+        arrow = "⬆️" if change and change>0 else "⬇️" if change and change<0 else "⚪️"
+        text = f"{change:+.2f}%" if change is not None else "暫無資料"
+        message += f"{s} {text} {arrow}, "
+    message = message.rstrip(", ") + "\n\n"
+
+    message += "📅 今日重要事件：\n21:30 美國 CPI, 22:45 製造業 PMI\n"
+
+    return message
+
+# ------------------ 發送晨報 ------------------
+def send_daily_report():
+    report = generate_report()
+    send_telegram(report)
+
+# ------------------ 自動循環，每1小時 ------------------
+INTERVAL = 60 * 60  # 3600秒 = 1小時
+
+if __name__ == "__main__":
+    print("🚀 系統啟動")
+    send_startup_test()  # 發送啟動測試訊息
+
+    while True:
+        print(f"⏰ 執行市場雷達: {datetime.datetime.now()}")
+        send_daily_report()
+        print(f"💤 等待 {INTERVAL/3600} 小時...")
+        time.sleep(INTERVAL)
