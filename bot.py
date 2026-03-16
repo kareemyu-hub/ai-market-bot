@@ -1,42 +1,69 @@
 import yfinance as yf
 import requests
-import time
 from datetime import datetime
 
+# ===== Telegram =====
+BOT_TOKEN = "你的BOT_TOKEN"
+CHAT_ID = "你的CHAT_ID"
 
-def get_stock(symbol):
+def send_telegram(message):
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+
     try:
+        requests.post(url, data=payload)
+    except:
+        pass
+
+
+# ===== 股票資料 =====
+def get_stock(symbol):
+
+    try:
+
         data = yf.download(symbol, period="1d", progress=False)
 
         if data.empty:
-            return "暫無資料 ⚪️"
+            return None
 
         close = float(data["Close"].iloc[-1])
         open_price = float(data["Open"].iloc[-1])
 
         change = ((close - open_price) / open_price) * 100
-        emoji = "🟢" if change > 0 else "🔴" if change < 0 else "⚪️"
+
+        emoji = "🟢" if change > 0 else "🔴"
 
         return f"{change:.2f}% {emoji}"
 
     except:
-        return "暫無資料 ⚪️"
+        return None
 
 
+# ===== 加密貨幣 =====
 def get_crypto(coin):
+
     try:
+
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd&include_24hr_change=true"
+
         data = requests.get(url).json()
 
         change = data[coin]["usd_24h_change"]
-        emoji = "🟢" if change > 0 else "🔴" if change < 0 else "⚪️"
+
+        emoji = "🟢" if change > 0 else "🔴"
 
         return f"{change:.2f}% {emoji}"
 
     except:
-        return "暫無資料 ⚪️"
+        return None
 
 
+# ===== 市場報告 =====
 def generate_report():
 
     sp500 = get_stock("SPY")
@@ -53,29 +80,59 @@ def generate_report():
 
     today = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    def safe(v):
+        return v if v else "暫無資料 ⚪️"
+
     message = f"""
 📊 AI市場雷達 {today}
 
-🌎 全球市場：
-S&P500 {sp500}, NASDAQ {nasdaq}
+🌎 全球市場
+S&P500 {safe(sp500)}
+NASDAQ {safe(nasdaq)}
 
-🇹🇼 台股市場：
-TSMC {tsmc}
+🇹🇼 台股
+TSMC {safe(tsmc)}
 
-💰 加密市場：
-BTC {btc}, ETH {eth}
+💰 加密
+BTC {safe(btc)}
+ETH {safe(eth)}
 
-🎯 今日熱門股票：
-TSMC {tsmc}, NVDA {nvda}, AAPL {aapl}, TSLA {tsla}, AMD {amd}
+🎯 AI熱門股
+NVDA {safe(nvda)}
+AMD {safe(amd)}
+AAPL {safe(aapl)}
+TSLA {safe(tsla)}
 
-📅 今日重要事件：
-21:30 美國 CPI, 22:45 製造業 PMI
+📅 今日事件
+21:30 美國 CPI
+22:45 製造業 PMI
 """
 
-    print(message)
+    return message
 
 
-# 每1小時執行一次
-while True:
-    generate_report()
-    time.sleep(3600)
+# ===== 系統啟動測試 =====
+def send_startup_test():
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    message = f"""
+🤖 AI市場雷達系統啟動
+
+系統時間：
+{now}
+
+狀態：
+✅ 系統正常運作
+"""
+
+    send_telegram(message)
+
+
+# ===== 主程式 =====
+
+send_startup_test()
+
+report = generate_report()
+
+send_telegram(report)
