@@ -48,12 +48,12 @@ def send_telegram(message):
 
 # ------------------ 系統啟動測試訊息 ------------------
 def send_startup_test():
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    tw_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
     message = f"""
 🤖 AI市場雷達系統啟動
 
 時間：
-{now}
+{tw_now}
 
 狀態：
 ✅ 系統正常運作
@@ -92,41 +92,41 @@ def analyze_sentiment(text):
     else:
         return "⚖️中性"
 
-# ------------------ 台股即時漲跌 ------------------
+# ------------------ 台股即時漲跌（永遠顯示價格 + 兩位小數） ------------------
 def fetch_tw_stock(stock_no):
     try:
-        now = datetime.datetime.now()
-        if now.hour < 9 or now.hour > 13:
-            return None
         url = f"https://finnhub.io/api/v1/quote?symbol={stock_no}&token={FINNHUB_KEY}"
         r = requests.get(url, timeout=10)
         data = r.json()
         c = float(data.get("c", 0))
         o = float(data.get("o", 0))
-        if c == 0 or o == 0:
-            return None
-        change = ((c - o)/o)*100
-        return round(change,2)
+        if c == 0:
+            c = float(data.get("pc", 0))
+            o = c
+        change = ((c - o)/o)*100 if o !=0 else 0
+        return round(change,2), round(c,2)
     except:
-        return None
+        return 0.0, None
 
-# ------------------ 美股 / Crypto ------------------
+# ------------------ 美股 / Crypto（永遠顯示價格 + 兩位小數） ------------------
 def fetch_yf_change(symbol):
     try:
-        data = yf.Ticker(symbol).history(period="1d", interval="5m")
-        if data.empty or len(data['Close']) < 2:
-            return None
-        change = ((data['Close'][-1]-data['Close'][0])/data['Close'][0])*100
-        return round(change,2)
+        data = yf.Ticker(symbol).history(period="2d", interval="1d")
+        if data.empty or len(data['Close']) < 1:
+            return 0.0, None
+        last_close = data['Close'][-1]
+        prev_close = data['Close'][-2] if len(data['Close'])>1 else last_close
+        change = ((last_close - prev_close)/prev_close)*100 if prev_close !=0 else 0
+        return round(change,2), round(last_close,2)
     except:
-        return None
+        return 0.0, None
 
 # ------------------ AI概念股強度 ------------------
 def fetch_ai_strength():
     count_up = 0
     valid_stocks = 0
     for s in AI_STOCKS:
-        change = fetch_yf_change(s)
+        change, _ = fetch_yf_change(s)
         if change is not None:
             valid_stocks += 1
             if change>0:
@@ -137,70 +137,73 @@ def fetch_ai_strength():
 
 # ------------------ 生成市場報告 ------------------
 def generate_report():
-    now_time = datetime.datetime.now().strftime("%H:%M")
+    tw_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%H:%M")
     today = datetime.date.today()
     headlines = fetch_news()
 
-    message = f"📊 AI市場雷達 {today} {now_time}\n\n"
+    message = f"📊 AI市場雷達 {today} {tw_now}\n\n"
 
     # 全球市場
     global_map = {"S&P500":"^GSPC","NASDAQ":"^IXIC"}
     global_change = {}
+    global_price = {}
     for k,v in global_map.items():
-        val = fetch_yf_change(v)
-        if val is None:
-            val = LAST_DATA["global"].get(k)
-        else:
-            LAST_DATA["global"][k] = val
-        global_change[k] = val
+        change, price = fetch_yf_change(v)
+        if change is None:
+            change = LAST_DATA["global"].get(k, 0.0)
+            price = LAST_DATA["global"].get(f"{k}_price", None)
+        LAST_DATA["global"][k] = change
+        LAST_DATA["global"][f"{k}_price"] = price
+        global_change[k] = change
+        global_price[k] = price
 
     gm_text = "🌎 全球市場：\n"
-    for k,v in global_change.items():
-        if v is None:
-            gm_text += f"{k} 暫無資料 ⚪️, "
-        else:
-            arrow = "⬆️" if v>0 else "⬇️" if v<0 else "⚪️"
-            gm_text += f"{k} {v:+.2f}% {arrow} (最後更新 {now_time}), "
+    for k in global_change:
+        c = global_change[k]
+        p = global_price[k]
+        arrow = "⬆️" if c>0 else "⬇️" if c<0 else "⚪️"
+        price_text = f"{p:.2f}" if p is not None else "暫無價格"
+        gm_text += f"{k} {c:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now}), "
     message += gm_text.rstrip(", ") + "\n\n"
 
     # 台股
     tw_map = {"TSMC":"TWSE:2330"}
-    tw_stock = {}
+    tw_change = {}
+    tw_price = {}
     for name,no in tw_map.items():
-        val = fetch_tw_stock(no)
-        if val is None:
-            val = LAST_DATA["tw"].get(name)
-        else:
-            LAST_DATA["tw"][name] = val
-        tw_stock[name] = val
+        change, price = fetch_tw_stock(no)
+        tw_change[name] = change
+        tw_price[name] = price
+        LAST_DATA["tw"][name] = change
+        LAST_DATA["tw"][f"{name}_price"] = price
 
     tw_text = "🇹🇼 台股市場：\n"
-    for k,v in tw_stock.items():
-        if v is None:
-            tw_text += f"{k} 非交易時間 ⚪️, "
-        else:
-            arrow = "⬆️" if v>0 else "⬇️"
-            tw_text += f"{k} {v:+.2f}% {arrow} (最後更新 {now_time}), "
+    for k in tw_change:
+        c = tw_change[k]
+        p = tw_price[k]
+        arrow = "⬆️" if c>0 else "⬇️" if c<0 else "⚪️"
+        price_text = f"{p:.2f}" if p is not None else "暫無價格"
+        tw_text += f"{k} {c:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now}), "
     message += tw_text.rstrip(", ") + "\n\n"
 
     # Crypto
     crypto_symbols = {"BTC":"BTC-USD","ETH":"ETH-USD"}
-    crypto = {}
+    crypto_change = {}
+    crypto_price = {}
     for k,v in crypto_symbols.items():
-        val = fetch_yf_change(v)
-        if val is None:
-            val = LAST_DATA["crypto"].get(k)
-        else:
-            LAST_DATA["crypto"][k] = val
-        crypto[k] = val
+        change, price = fetch_yf_change(v)
+        crypto_change[k] = change
+        crypto_price[k] = price
+        LAST_DATA["crypto"][k] = change
+        LAST_DATA["crypto"][f"{k}_price"] = price
 
     crypto_text = "💰 加密市場：\n"
-    for k,v in crypto.items():
-        if v is None:
-            crypto_text += f"{k} 暫無資料 ⚪️, "
-        else:
-            arrow = "⬆️" if v>0 else "⬇️"
-            crypto_text += f"{k} {v:+.2f}% {arrow} (最後更新 {now_time}), "
+    for k in crypto_change:
+        c = crypto_change[k]
+        p = crypto_price[k]
+        arrow = "⬆️" if c>0 else "⬇️" if c<0 else "⚪️"
+        price_text = f"{p:.2f}" if p is not None else "暫無價格"
+        crypto_text += f"{k} {c:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now}), "
     message += crypto_text.rstrip(", ") + "\n\n"
 
     # 新聞摘要
@@ -213,23 +216,24 @@ def generate_report():
         LAST_DATA["ai_strength"] = ai_val
     else:
         ai_val = LAST_DATA.get("ai_strength", "資料不足 ⚪️")
-    message += f"🧠 AI板塊強度： {ai_val} (最後更新 {now_time})\n\n"
+    message += f"🧠 AI板塊強度： {ai_val} (最後更新 {tw_now})\n\n"
 
     # 熱門股票
     message += "🎯 今日熱門股票：\n"
     for s in TOP_STOCKS:
         if s=="TSMC":
-            val = tw_stock.get("TSMC")
+            c = tw_change.get("TSMC",0.0)
+            p = tw_price.get("TSMC",None)
         else:
-            val = fetch_yf_change(s)
-            if val is None:
-                val = LAST_DATA["stocks"].get(s)
-            else:
-                LAST_DATA["stocks"][s] = val
-        if val is None:
-            continue
-        arrow = "⬆️" if val>0 else "⬇️"
-        message += f"{s} {val:+.2f}% {arrow} (最後更新 {now_time}), "
+            c, p = fetch_yf_change(s)
+            if c is None:
+                c = LAST_DATA["stocks"].get(s,0.0)
+                p = LAST_DATA["stocks"].get(f"{s}_price", None)
+            LAST_DATA["stocks"][s] = c
+            LAST_DATA["stocks"][f"{s}_price"] = p
+        arrow = "⬆️" if c>0 else "⬇️" if c<0 else "⚪️"
+        price_text = f"{p:.2f}" if p is not None else "暫無價格"
+        message += f"{s} {c:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now}), "
     message = message.rstrip(", ") + "\n\n"
 
     message += "📅 今日重要事件：\n21:30 美國 CPI, 22:45 製造業 PMI\n"
