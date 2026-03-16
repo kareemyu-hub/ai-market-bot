@@ -23,6 +23,15 @@ TOP_STOCKS = ["TSMC","NVDA","AAPL","TSLA","AMD"]
 # ------------------ AI概念股 ------------------
 AI_STOCKS = ["NVDA","AMD","TSM","AAPL","TSLA"]
 
+# ------------------ 緩存最後一次資料 ------------------
+LAST_DATA = {
+    "global": {},
+    "tw": {},
+    "crypto": {},
+    "ai_strength": None,
+    "stocks": {}
+}
+
 # ------------------ Telegram 發送 ------------------
 def send_telegram(message):
     try:
@@ -54,16 +63,24 @@ def send_startup_test():
 # ------------------ 新聞抓取 + 情緒分析 ------------------
 def fetch_news():
     headlines = []
+    seen_titles = set()
     for feed_url in NEWS_FEEDS:
         try:
             d = feedparser.parse(feed_url)
-            for entry in d.entries[:5]:
+            for entry in d.entries[:10]:
                 title = entry.title
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
                 summary = getattr(entry,"summary","")
                 sentiment = analyze_sentiment(title + summary)
                 headlines.append(f"{sentiment} {title}\n{entry.link}")
+                if len(headlines) >= 5:
+                    break
+            if len(headlines) >= 5:
+                break
         except:
-            continue  # 不抓到新聞就跳過
+            continue
     return headlines
 
 def analyze_sentiment(text):
@@ -79,7 +96,6 @@ def analyze_sentiment(text):
 def fetch_tw_stock(stock_no):
     try:
         now = datetime.datetime.now()
-        # 台股開盤時間 09:00 - 13:30
         if now.hour < 9 or now.hour > 13:
             return None
         url = f"https://finnhub.io/api/v1/quote?symbol={stock_no}&token={FINNHUB_KEY}"
@@ -121,48 +137,70 @@ def fetch_ai_strength():
 
 # ------------------ 生成市場報告 ------------------
 def generate_report():
+    now_time = datetime.datetime.now().strftime("%H:%M")
     today = datetime.date.today()
     headlines = fetch_news()
 
-    message = f"📊 AI市場雷達 {today}\n\n"
+    message = f"📊 AI市場雷達 {today} {now_time}\n\n"
 
     # 全球市場
     global_map = {"S&P500":"^GSPC","NASDAQ":"^IXIC"}
-    global_change = {k: fetch_yf_change(v) for k,v in global_map.items()}
+    global_change = {}
+    for k,v in global_map.items():
+        val = fetch_yf_change(v)
+        if val is None:
+            val = LAST_DATA["global"].get(k)
+        else:
+            LAST_DATA["global"][k] = val
+        global_change[k] = val
+
     gm_text = "🌎 全球市場：\n"
     for k,v in global_change.items():
         if v is None:
-            continue
-        arrow = "⬆️" if v>0 else "⬇️"
-        gm_text += f"{k} {v:+.2f}% {arrow}, "
-    if gm_text.strip() == "🌎 全球市場：":
-        gm_text += "暫無資料 ⚪️"
+            gm_text += f"{k} 暫無資料 ⚪️, "
+        else:
+            arrow = "⬆️" if v>0 else "⬇️" if v<0 else "⚪️"
+            gm_text += f"{k} {v:+.2f}% {arrow} (最後更新 {now_time}), "
     message += gm_text.rstrip(", ") + "\n\n"
 
     # 台股
     tw_map = {"TSMC":"TWSE:2330"}
-    tw_stock = {name: fetch_tw_stock(no) for name,no in tw_map.items()}
+    tw_stock = {}
+    for name,no in tw_map.items():
+        val = fetch_tw_stock(no)
+        if val is None:
+            val = LAST_DATA["tw"].get(name)
+        else:
+            LAST_DATA["tw"][name] = val
+        tw_stock[name] = val
+
     tw_text = "🇹🇼 台股市場：\n"
     for k,v in tw_stock.items():
         if v is None:
-            continue
-        arrow = "⬆️" if v>0 else "⬇️"
-        tw_text += f"{k} {v:+.2f}% {arrow}, "
-    if tw_text.strip() == "🇹🇼 台股市場：":
-        tw_text += "非交易時間 ⚪️"
+            tw_text += f"{k} 非交易時間 ⚪️, "
+        else:
+            arrow = "⬆️" if v>0 else "⬇️"
+            tw_text += f"{k} {v:+.2f}% {arrow} (最後更新 {now_time}), "
     message += tw_text.rstrip(", ") + "\n\n"
 
     # Crypto
     crypto_symbols = {"BTC":"BTC-USD","ETH":"ETH-USD"}
-    crypto = {k: fetch_yf_change(v) for k,v in crypto_symbols.items()}
+    crypto = {}
+    for k,v in crypto_symbols.items():
+        val = fetch_yf_change(v)
+        if val is None:
+            val = LAST_DATA["crypto"].get(k)
+        else:
+            LAST_DATA["crypto"][k] = val
+        crypto[k] = val
+
     crypto_text = "💰 加密市場：\n"
     for k,v in crypto.items():
         if v is None:
-            continue
-        arrow = "⬆️" if v>0 else "⬇️"
-        crypto_text += f"{k} {v:+.2f}% {arrow}, "
-    if crypto_text.strip() == "💰 加密市場：":
-        crypto_text += "暫無資料 ⚪️"
+            crypto_text += f"{k} 暫無資料 ⚪️, "
+        else:
+            arrow = "⬆️" if v>0 else "⬇️"
+            crypto_text += f"{k} {v:+.2f}% {arrow} (最後更新 {now_time}), "
     message += crypto_text.rstrip(", ") + "\n\n"
 
     # 新聞摘要
@@ -170,16 +208,28 @@ def generate_report():
         message += "📰 最新新聞摘要：\n" + "\n".join(headlines) + "\n\n"
 
     # AI板塊強度
-    message += f"🧠 AI板塊強度： {fetch_ai_strength()}\n\n"
+    ai_val = fetch_ai_strength()
+    if ai_val != "資料不足 ⚪️":
+        LAST_DATA["ai_strength"] = ai_val
+    else:
+        ai_val = LAST_DATA.get("ai_strength", "資料不足 ⚪️")
+    message += f"🧠 AI板塊強度： {ai_val} (最後更新 {now_time})\n\n"
 
     # 熱門股票
     message += "🎯 今日熱門股票：\n"
     for s in TOP_STOCKS:
-        change = fetch_yf_change(s) if s!="TSMC" else tw_stock["TSMC"]
-        if change is None:
+        if s=="TSMC":
+            val = tw_stock.get("TSMC")
+        else:
+            val = fetch_yf_change(s)
+            if val is None:
+                val = LAST_DATA["stocks"].get(s)
+            else:
+                LAST_DATA["stocks"][s] = val
+        if val is None:
             continue
-        arrow = "⬆️" if change>0 else "⬇️"
-        message += f"{s} {change:+.2f}% {arrow}, "
+        arrow = "⬆️" if val>0 else "⬇️"
+        message += f"{s} {val:+.2f}% {arrow} (最後更新 {now_time}), "
     message = message.rstrip(", ") + "\n\n"
 
     message += "📅 今日重要事件：\n21:30 美國 CPI, 22:45 製造業 PMI\n"
@@ -192,11 +242,11 @@ def send_daily_report():
     send_telegram(report)
 
 # ------------------ 自動循環，每1小時 ------------------
-INTERVAL = 60 * 60  # 3600秒 = 1小時
+INTERVAL = 60 * 60  # 1小時
 
 if __name__ == "__main__":
     print("🚀 系統啟動")
-    send_startup_test()  # 發送啟動測試訊息
+    send_startup_test()  # 啟動測試訊息
 
     while True:
         print(f"⏰ 執行市場雷達: {datetime.datetime.now()}")
