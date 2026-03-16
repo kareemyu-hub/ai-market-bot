@@ -1,3 +1,3 @@
-requests
-feedparser
 yfinance
+requests
+pandas
