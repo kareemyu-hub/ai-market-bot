@@ -14,8 +14,6 @@ NEWS_FEEDS = [
     "https://tw.finance.yahoo.com/rss/"
 ]
 
-TOP_STOCKS = ["TSMC","NVDA","AAPL","TSLA","AMD"]
-
 # ------------------ Telegram ------------------
 def send_telegram(message):
     try:
@@ -81,78 +79,15 @@ def get_crypto(symbol):
     except:
         return None, None
 
-# ------------------ 台股 ------------------
-def get_tsmc_price():
-    try:
-        url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_AVG?response=json&stockNo=2330"
-        res = requests.get(url, timeout=10).json()
-        data = res.get("data", [])
-        if not data:
-            return None, None
-        last = data[-1]
-        price = float(last[1].replace(",", ""))
-        prev = float(data[-2][1].replace(",", "")) if len(data) > 1 else price
-        change = ((price - prev)/prev)*100
-        return round(change,2), round(price,2)
-    except:
-        return None, None
-
-# ------------------ 美股 ------------------
-def get_us_stock(symbol):
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        res = requests.get(url, timeout=10).json()
-        if not res.get("chart") or not res["chart"].get("result"):
-            return None, None
-        result = res["chart"]["result"][0]
-        price = result["meta"]["regularMarketPrice"]
-        prev = result["meta"]["previousClose"]
-        change = ((price - prev)/prev)*100
-        return round(change,2), round(price,2)
-    except:
-        return None, None
-
-# ------------------ 統一抓價 ------------------
-def fetch_price(symbol):
-    if symbol == "2330.TW":
-        return get_tsmc_price()
-    if symbol == "BTC-USD":
-        return get_crypto("BTCUSDT")
-    if symbol == "ETH-USD":
-        return get_crypto("ETHUSDT")
-    if symbol in ["^GSPC","^IXIC"]:
-        return get_us_stock(symbol)
-    # 其他暫無資料
-    return None, None
-
 # ------------------ 生成報告 ------------------
 def generate_report():
     tw_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
     message = f"📊 AI市場雷達 {tw_now}\n\n"
 
-    # 🌎 全球市場
-    message += "🌎 全球市場：\n"
-    global_map = {"S&P500":"^GSPC","NASDAQ":"^IXIC"}
-    for k,v in global_map.items():
-        change,price = fetch_price(v)
-        arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
-        price_text = f"{price:.2f}" if price else "暫無價格"
-        change_text = f"{change:+.2f}%" if change is not None else "暫無資料"
-        message += f"{k} {change_text} {arrow} ({price_text}) (更新 {tw_now}), "
-    message = message.rstrip(", ") + "\n\n"
-
-    # 🇹🇼 台股
-    message += "🇹🇼 台股市場：\n"
-    change,price = fetch_price("2330.TW")
-    arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
-    price_text = f"{price:.2f}" if price else "暫無價格"
-    change_text = f"{change:+.2f}%" if change is not None else "暫無資料"
-    message += f"TSMC {change_text} {arrow} ({price_text}) (更新 {tw_now})\n\n"
-
     # 💰 加密
     message += "💰 加密市場：\n"
-    for k,v in {"BTC":"BTC-USD","ETH":"ETH-USD"}.items():
-        change,price = fetch_price(v)
+    for k,v in {"BTC":"BTCUSDT","ETH":"ETHUSDT"}.items():
+        change,price = get_crypto(v)
         arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
         price_text = f"{price:.2f}" if price else "暫無價格"
         change_text = f"{change:+.2f}%" if change is not None else "暫無資料"
@@ -163,21 +98,6 @@ def generate_report():
     headlines = fetch_news()
     if headlines:
         message += "📰 最新新聞摘要：\n" + "\n".join(headlines) + "\n\n"
-
-    # 🎯 今日熱門股票
-    message += "🎯 今日熱門股票：\n"
-    for s in TOP_STOCKS:
-        if s=="TSMC":
-            change,price = fetch_price("2330.TW")
-        elif s in ["NVDA","AAPL","TSLA","AMD"]:
-            change,price = fetch_price(s)
-        else:
-            change,price = None,None
-        arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
-        price_text = f"{price:.2f}" if price else "暫無價格"
-        change_text = f"{change:+.2f}%" if change is not None else "暫無資料"
-        message += f"{s} {change_text} {arrow} ({price_text}) (更新 {tw_now}), "
-    message = message.rstrip(", ") + "\n\n"
 
     # 📅 今日重要事件
     message += "📅 今日重要事件：\n21:30 美國 CPI, 22:45 製造業 PMI\n"
