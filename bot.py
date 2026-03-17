@@ -1,18 +1,20 @@
 import os
 import requests
 import datetime
-import time
 import feedparser
+import traceback
+import yfinance as yf
+import time
 
-# ------------------ 環境變數 ------------------
 TOKEN = os.environ.get("TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-# ------------------ 新聞來源 ------------------
 NEWS_FEEDS = [
     "https://www.reuters.com/rssFeed/wealth",
     "https://tw.finance.yahoo.com/rss/"
 ]
+
+TOP_STOCKS = ["TSMC","NVDA","AAPL","TSLA","AMD"]
 
 # ------------------ Telegram ------------------
 def send_telegram(message):
@@ -25,9 +27,12 @@ def send_telegram(message):
 
 # ------------------ 啟動測試 ------------------
 def send_startup_test():
-    tw_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    tw_now = datetime.datetime.now(
+        datetime.timezone(datetime.timedelta(hours=8))
+    ).strftime("%Y-%m-%d %H:%M")
+
     message = f"""
-🤖 AI市場雷達啟動成功
+🤖 AI市場雷達系統啟動
 
 時間：
 {tw_now}
@@ -51,70 +56,166 @@ def analyze_sentiment(text):
 def fetch_news():
     headlines = []
     seen = set()
+
     for feed_url in NEWS_FEEDS:
         try:
             d = feedparser.parse(feed_url)
+
             for entry in d.entries[:10]:
                 title = entry.title
                 if title in seen:
                     continue
+
                 seen.add(title)
+
                 summary = getattr(entry,"summary","")
                 sentiment = analyze_sentiment(title + summary)
-                headlines.append(f"{sentiment} {title}\n{entry.link}")
+
+                headlines.append(
+                    f"{sentiment} {title}\n{entry.link}"
+                )
+
                 if len(headlines) >= 5:
                     return headlines
+
         except:
             continue
+
     return headlines
 
-# ------------------ 加密 ------------------
-def get_crypto(symbol):
+# ------------------ yfinance 抓價格（通用） ------------------
+def fetch_price(symbol):
+
     try:
-        url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-        res = requests.get(url, timeout=10).json()
-        price = float(res["lastPrice"])
-        change = float(res["priceChangePercent"])
+        ticker = yf.Ticker(symbol)
+
+        price = ticker.fast_info.get("lastPrice")
+        prev = ticker.fast_info.get("previousClose")
+
+        if price is None or prev is None:
+            return None, None
+
+        change = ((price - prev) / prev) * 100
+
         return round(change,2), round(price,2)
-    except:
+
+    except Exception as e:
+        print("yfinance error:", e)
         return None, None
 
-# ------------------ 生成報告 ------------------
+# ------------------ 報告 ------------------
 def generate_report():
-    tw_now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
-    message = f"📊 AI市場雷達 {tw_now}\n\n"
+
+    tw_now = datetime.datetime.now(
+        datetime.timezone(datetime.timedelta(hours=8))
+    ).strftime("%H:%M")
+
+    today = datetime.date.today()
+
+    message = f"📊 AI市場雷達 {today} {tw_now}\n\n"
+
+    # 🌎 全球市場
+    message += "🌎 全球市場：\n"
+
+    global_map = {
+        "S&P500":"^GSPC",
+        "NASDAQ":"^IXIC"
+    }
+
+    for k,v in global_map.items():
+
+        change,price = fetch_price(v)
+
+        arrow = "⚪️"
+        if change:
+            arrow = "⬆️" if change>0 else "⬇️"
+
+        price_text = f"{price:.2f}" if price else "暫無價格"
+
+        message += f"{k} {change:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now}), "
+
+    message = message.rstrip(", ") + "\n\n"
+
+    # 🇹🇼 台股（修正：改用 yfinance）
+    message += "🇹🇼 台股市場：\n"
+
+    change,price = fetch_price("2330.TW")
+
+    arrow = "⚪️"
+    if change:
+        arrow = "⬆️" if change>0 else "⬇️"
+
+    price_text = f"{price:.2f}" if price else "暫無價格"
+
+    message += f"TSMC {change:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now})\n\n"
 
     # 💰 加密
     message += "💰 加密市場：\n"
-    for k,v in {"BTC":"BTCUSDT","ETH":"ETHUSDT"}.items():
-        change,price = get_crypto(v)
-        arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
+
+    crypto = {
+        "BTC":"BTC-USD",
+        "ETH":"ETH-USD"
+    }
+
+    for k,v in crypto.items():
+
+        change,price = fetch_price(v)
+
+        arrow = "⚪️"
+        if change:
+            arrow = "⬆️" if change>0 else "⬇️"
+
         price_text = f"{price:.2f}" if price else "暫無價格"
-        change_text = f"{change:+.2f}%" if change is not None else "暫無資料"
-        message += f"{k} {change_text} {arrow} ({price_text}) (更新 {tw_now}), "
+
+        message += f"{k} {change:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now}), "
+
     message = message.rstrip(", ") + "\n\n"
 
     # 📰 新聞
     headlines = fetch_news()
     if headlines:
-        message += "📰 最新新聞摘要：\n" + "\n".join(headlines) + "\n\n"
+        message += "📰 最新新聞摘要：\n"
+        message += "\n".join(headlines) + "\n\n"
 
-    # 📅 今日重要事件
+    # 🎯 熱門股票
+    message += "🎯 今日熱門股票：\n"
+
+    for s in TOP_STOCKS:
+
+        if s == "TSMC":
+            change,price = fetch_price("2330.TW")
+        else:
+            change,price = fetch_price(s)
+
+        arrow = "⚪️"
+        if change:
+            arrow = "⬆️" if change>0 else "⬇️"
+
+        price_text = f"{price:.2f}" if price else "暫無價格"
+
+        message += f"{s} {change:+.2f}% {arrow} ({price_text}) (最後更新 {tw_now}), "
+
+    message = message.rstrip(", ") + "\n\n"
+
     message += "📅 今日重要事件：\n21:30 美國 CPI, 22:45 製造業 PMI\n"
 
     return message
 
 # ------------------ 發送 ------------------
-def send_report():
-    send_telegram(generate_report())
+def send_daily_report():
+    report = generate_report()
+    send_telegram(report)
 
 # ------------------ 主程式 ------------------
-INTERVAL = 3600  # 每1小時
+INTERVAL = 3600
 
 if __name__ == "__main__":
-    print("🚀 系統啟動")
+
+    print("🚀 AI市場雷達啟動")
+
     send_startup_test()
+
     while True:
-        print("📡 更新市場資料")
-        send_report()
+        print("執行市場更新")
+        send_daily_report()
         time.sleep(INTERVAL)
