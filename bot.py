@@ -70,7 +70,18 @@ def fetch_news():
             continue
     return headlines
 
-# ------------------ 台股（TSMC） ------------------
+# ------------------ 加密 ------------------
+def get_crypto(symbol):
+    try:
+        url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+        res = requests.get(url, timeout=10).json()
+        price = float(res["lastPrice"])
+        change = float(res["priceChangePercent"])
+        return round(change,2), round(price,2)
+    except:
+        return None, None
+
+# ------------------ 台股 ------------------
 def get_tsmc_price():
     try:
         url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_AVG?response=json&stockNo=2330"
@@ -101,17 +112,6 @@ def get_us_stock(symbol):
     except:
         return None, None
 
-# ------------------ 加密 ------------------
-def get_crypto(symbol):
-    try:
-        url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-        res = requests.get(url, timeout=10).json()
-        price = float(res["lastPrice"])
-        change = float(res["priceChangePercent"])
-        return round(change,2), round(price,2)
-    except:
-        return None, None
-
 # ------------------ 統一抓價 ------------------
 def fetch_price(symbol):
     if symbol == "2330.TW":
@@ -120,7 +120,10 @@ def fetch_price(symbol):
         return get_crypto("BTCUSDT")
     if symbol == "ETH-USD":
         return get_crypto("ETHUSDT")
-    return get_us_stock(symbol)
+    if symbol in ["^GSPC","^IXIC"]:
+        return get_us_stock(symbol)
+    # 其他暫無資料
+    return None, None
 
 # ------------------ 生成報告 ------------------
 def generate_report():
@@ -132,9 +135,7 @@ def generate_report():
     global_map = {"S&P500":"^GSPC","NASDAQ":"^IXIC"}
     for k,v in global_map.items():
         change,price = fetch_price(v)
-        arrow = "⚪️"
-        if change is not None:
-            arrow = "⬆️" if change>0 else "⬇️"
+        arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
         price_text = f"{price:.2f}" if price else "暫無價格"
         change_text = f"{change:+.2f}%" if change is not None else "暫無資料"
         message += f"{k} {change_text} {arrow} ({price_text}) (更新 {tw_now}), "
@@ -150,8 +151,7 @@ def generate_report():
 
     # 💰 加密
     message += "💰 加密市場：\n"
-    crypto = {"BTC":"BTC-USD","ETH":"ETH-USD"}
-    for k,v in crypto.items():
+    for k,v in {"BTC":"BTC-USD","ETH":"ETH-USD"}.items():
         change,price = fetch_price(v)
         arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
         price_text = f"{price:.2f}" if price else "暫無價格"
@@ -167,15 +167,21 @@ def generate_report():
     # 🎯 今日熱門股票
     message += "🎯 今日熱門股票：\n"
     for s in TOP_STOCKS:
-        symbol = "2330.TW" if s=="TSMC" else s
-        change,price = fetch_price(symbol)
+        if s=="TSMC":
+            change,price = fetch_price("2330.TW")
+        elif s in ["NVDA","AAPL","TSLA","AMD"]:
+            change,price = fetch_price(s)
+        else:
+            change,price = None,None
         arrow = "⚪️" if change is None else ("⬆️" if change>0 else "⬇️")
         price_text = f"{price:.2f}" if price else "暫無價格"
         change_text = f"{change:+.2f}%" if change is not None else "暫無資料"
         message += f"{s} {change_text} {arrow} ({price_text}) (更新 {tw_now}), "
     message = message.rstrip(", ") + "\n\n"
 
+    # 📅 今日重要事件
     message += "📅 今日重要事件：\n21:30 美國 CPI, 22:45 製造業 PMI\n"
+
     return message
 
 # ------------------ 發送 ------------------
